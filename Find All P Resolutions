@@ -1,0 +1,303 @@
+import math
+import array
+import json
+
+#  Loading the dictionary
+with open("/Users/adityakhurmi/Desktop/Research '24/Kollar Conjecture/Code/valid_arrays.txt", "r") as file:
+    dp = json.load(file)
+
+# print(dp)
+
+#####################################################################
+'''
+CODE TO DUBDIVIDE CONES
+'''
+#####################################################################
+
+def P(arr):
+    return [[arr[2*i],arr[2*i+1]] for i in range(int(len(arr)/2))]
+
+def add(v,w):
+# assumes same length array
+    return [v[i] + w[i] for i in range(len(v))]
+
+def scale(k,v):
+# assumes same length array
+    return [k*v[i] for i in range(len(v))]
+    
+def matmul(M,v):
+#Wiorks fir a 2x2 matrix and 2x1 vector
+    return [M[0][0] * v[0] + M[0][1] * v[1], M[1][0] * v[0] + M[1][1] * v[1]]
+
+def sign(x):
+    if x>0:
+        return 1
+    if x == 0:
+          return 0
+    return -1
+
+def bezout(a, b):
+    s1 = sign(a)
+    s2 = sign(b)
+    a = abs(a)
+    b = abs(b)
+    """
+    Returns a list `result` of size 3 where:
+    Referring to the equation ax + by = gcd(a, b)
+        result[0] is gcd(a, b)
+        result[1] is x
+        result[2] is y
+    """
+    s = 0; old_s = 1
+    t = 1; old_t = 0
+    r = b; old_r = a
+
+    while r != 0:
+        quotient = old_r//r # In Python, // operator performs integer or floored division
+        # This is a pythonic way to swap numbers
+        # See the same part in C++ implementation below to know more
+        old_r, r = r, old_r - quotient*r
+        old_s, s = s, old_s - quotient*s
+        old_t, t = t, old_t - quotient*t
+    return [old_r, s1*old_s, s2*old_t]
+    
+def gcd(a,b):
+    return bezout(a,b)[0]
+
+def find(cone):
+    # x1 = math.ceil(cone[0][0]); y1 = math.ceil(cone[0][1]); x2 = math.ceil(cone[1][0]); y2 = math.ceil(cone[1][1])
+    x1 = cone[0][0]; y1 = cone[0][1]; x2 = cone[1][0]; y2 = cone[1][1]
+    # x1 = int(x1/math.gcd(x1,y1)); y1 = int(y1/math.gcd(x1,y1))
+    # x2 = int(x2/math.gcd(x2,y2)); y2 = int(y2/math.gcd(x2,y2))
+    
+    T = [[y1,-x1],[bezout(x1,y1)[1],bezout(x1,y1)[2]]]
+    w = [x2,y2]
+    Tw = matmul(T,w)
+    sign = 1
+    if Tw[0] == 0:
+        return None
+    if Tw[0] < 0:
+        sign = -1;
+    k = math.ceil(sign*Tw[1]/Tw[0])
+    # invT = np.linalg.inv(T)
+    invT = [[bezout(x1,y1)[2],x1],[-bezout(x1,y1)[1], y1]]
+    temp = [sign,k]
+    return matmul(invT,temp)
+
+def subdivision(cone):
+    start = cone[0]; end = cone[1]
+    # print("")
+    # print("Between {},{}".format(start,end))
+    fc = end
+    ans = [start]
+    while (find(cone)[0] != end[0] or find(cone)[1] != end[1]):
+        fc = find(cone)
+        
+        '''If want to print the Vector'''
+ 
+        ans.append(fc)
+        cone = [fc,cone[1]]
+    ans.append(end)
+    # print(len(ans)-2)
+    return ans
+
+def sub(fan):
+    i = 0; n = len(fan)
+    arr = []
+    while i < n:
+        # Vector(fan[i % n][0],fan[i % n][1])
+        '''ONLY SUBDIVIDES IF CONVEX'''
+        x = fan[i % n][0]; y = fan[i % n][1]
+        z = fan[(i+1) % n][0]; w = fan[(i+1) % n][1]
+        if x*w-y*z > 0:
+            sub_array = subdivision([fan[i % n],fan[(i+1) % n]])
+            for elem in sub_array[:-1]:
+                arr.append(elem)
+        else:
+            arr.append(fan[i % n])
+        i += 1
+    return arr
+
+#####################################################################
+'''
+CODE TO FIND P-RESOLUTIONS OF CYCLIC QUOTIENT SINGULARITIES
+'''
+#####################################################################
+
+''' 
+[b] for 1/n(1,q), i.e. self-intersection numbers
+note: [a] = 1/n(1,n-q) 
+'''
+def give_b(n,q): 
+    def help(n,q,curr):
+        ## Error cases:
+        if n < q or q < 0:
+            print("ERROR: bad 1/n(1,q)", (n,q))
+        if q == 0:
+            return curr
+        k = math.ceil(n/q)
+        curr.append(k)
+        return help(q,k*q-n,curr)
+    return help(n,q,[])
+
+# print(give_b(55,34))
+
+'''
+Find sequences in K_{e-2}(Y)
+'''
+def give_k(n,q):
+    a = give_b(n,n-q)
+    n = len(a)
+    sequences = dp[str(n)]
+    valid = []
+    for sequence in sequences: 
+        should_append = True
+        for i in range(n):
+            if a[i] < sequence[i]:
+                should_append = False
+                break
+        if should_append:
+            valid.append(sequence) 
+    return valid
+
+# print(dp['4'])
+# print(give_b(19,8))
+# print(give_k(19,11))
+
+''' 
+find (n,q) in 1/n(1,q) given [b] i.e. self-intersection numbers
+NOTE: we move left to right
+'''
+def give_nq(b):
+    def help(b,n,q):
+        if len(b) == 0:
+            return n,q
+        return help(b[:-1],b[-1]*n-q,n)
+    return help(b,1,0)
+
+# print(give_nq([2,3,3,3,2]))
+# print(give_nq([3,1,2,2]))
+
+''' 
+given [k], output [q]. 
+NOTE: WE DO NOT OUTPUT FIRST AND LAST 0 
+'''
+def give_q(k):
+    arr = [0,1]
+    for elem in k:
+        arr.append(arr[-1]*elem - arr[-2])
+    if arr[-1] != 0:
+        print("ERROR: [k] does not represent 0")
+    return arr[1:-1]
+
+# print(give_q([3,1,2,2]))
+
+'''
+get w_i of the cyclic quotient singularity
+'''
+def give_w(n,q):
+    w = [[0,1],[1,1]]
+    a = give_b(n,n-q)
+    for elem in a:
+        w.append(add(scale(elem,w[-1]),scale(-1,w[-2])))
+    if w[-1] != [n,q]:
+        print("ERROR: w_e is not [n,q]")
+    return w
+
+# print(give_w(55,34))
+
+''' 
+get the walls "w^i/q_i - w^{i-1}/q_{i-1}"
+'''
+def give_walls(n,q,k):
+    w = give_w(n,q)[1:-1]
+    q = give_q(k)
+    if len(q) != len(w):
+        print("ERROR: [w], [q] different lengths")
+        print("[w] = ", w)
+        print("[q] = ", q)
+    walls = []
+    for i in range(1,len(w)):
+        ''' instead of w^i/q_i - w^{i-1}/q_{i-1}, we find
+                    q_{i-1} w^i - q_i w^{i-1}
+            then we divide by gcd of coordinates '''
+        [x,y] = add(scale(q[i-1],w[i]),scale(-q[i],w[i-1]))
+        walls.append([int(x/gcd(x,y)),int(y/gcd(x,y))])
+    return walls
+
+# print(give_walls(55,34,[3,1,2,2]))
+
+''' 
+get the resolution
+'''
+def give_p_res(n,q,k):
+    walls = give_walls(n,q,k)
+    fan = [[1,0]]
+    for [x,y] in walls:
+        if fan[-1] != [-y,x]:
+            fan.append([-y,x]) 
+    if walls[-1] != [n,q]:
+        fan.append([-q,n])
+    divided = sub(fan)
+    if len(divided) < 2:
+        print("ERROR: less than 2 vectors in the fan")
+    
+    '''Code to find self-intersection numbers'''
+    self_inter = [] # self-intersection numbers
+    in_X = [] # curves that are in the p-resolutions
+    i = 1; size = len(divided)
+    while i < size-1:
+        prev = divided[(i-1)%size]; curr = divided[i]; nextt = divided[(i+1)%size]
+        if curr in fan:
+            in_X.append(i)
+        if curr[0] != 0:
+            self_inter.append(-int((prev[0]+nextt[0])/curr[0]))
+        else:
+            self_inter.append(-int((prev[1]+nextt[1])/curr[1]))
+        i += 1
+        
+    print(self_inter)
+    print("{} -> {}".format([x for x in range(1,len(divided)-1)],in_X))
+    # print("self-intersection of Y:")
+        
+    return sub(fan)
+
+# give_p_res(55,34,[3,1,2,2])
+
+'''
+Final function to print ALL p-resolutions
+'''
+def print_all_p_resolutions(n,q):
+    sequences = give_k(n,q)
+    print("")
+    print('--------------------------------------------\n--------------------------------------------',end = '\n\n')
+    print("Singularity 1/{}(1,{}), Curves = {}".format(n,q,give_b(n,q)), end = '\n\n')
+    for i in range(len(sequences)):
+        print('--------------')
+        print("P-resolution {}".format(i+1), end = '\n\n')
+        give_p_res(n,q,sequences[i])
+        print("") 
+
+
+#####################################################################
+'''
+FINDING ALL P-RESOLUTIONS OF CYCLIC QUOTIENT SINGULARITIES
+'''
+#####################################################################
+
+'''
+INPUT: (n,q) : for the singularity 1/n(1,q)
+
+print_all_p_resolutions(n,q)
+
+If have self intersection numbers, use
+
+n,q = give_nq(b); print_all_p_resolutions(n,q)
+
+NOTE: use positive numbers for [b], so for e.g. [2,3] means two curves with self-intersections -2, -3
+'''
+
+# print_all_p_resolutions(55,34)
+# print_all_p_resolutions(9,2)
+# b = [2,9,3]
+# n,q = give_nq(b); print_all_p_resolutions(n,q)
