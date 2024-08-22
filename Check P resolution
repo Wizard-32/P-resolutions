@@ -1,9 +1,18 @@
 import numpy as np
-import fractions
+from fractions import Fraction
+
+'''Return hirzebruch fraction given list of self intersection numbers'''
+def hirz(arr):
+    if len(arr) == 1:
+        return Fraction(-arr[0])
+    return Fraction(-arr[0])-1/hirz(arr[1:])
 
 # asumes a, b are 1 x n arrays
 def dot(a, b):
     return sum([a[i]*b[i] for i in range(len(a))])
+
+def check_symmetric(a, rtol=1e-05, atol=1e-08):
+    return np.allclose(a, np.transpose(a), rtol=rtol, atol=atol)
 
 def solve_in_rationals(A: np.ndarray, b: np.ndarray):
     d = int(np.rint(np.linalg.det(A)))
@@ -11,10 +20,12 @@ def solve_in_rationals(A: np.ndarray, b: np.ndarray):
     for i in range(np.shape(A)[0]):
         Ai = np.copy(A)
         Ai[:, i] = b
-        t = fractions.Fraction(int(np.rint(np.linalg.det(Ai))), d)
-        sol.append(t.numerator)
+        t = Fraction(int(np.rint(np.linalg.det(Ai))), d)
+        # sol.append(t.numerator)
         # sol.append((str(t.numerator) + '/' + str(t.denominator)))
-    return [sol, t.denominator]
+        sol.append(t)
+    # return [sol, t.denominator]
+    return sol
 
 '''
 CLASS SURFACE:
@@ -58,8 +69,10 @@ class surface():
         for i in range(n):
             M[i][i] = self.self_inter[i]
         for i in range(n):
-            for x in adj[i]:
+            for x in self.adj[i]:
                 M[i][x-self.indexing] = 1
+        if not check_symmetric(M):
+            print("WRONG MATRIX")
         return M
 
     '''
@@ -68,12 +81,12 @@ class surface():
     def f(self):
         return [-2-self.M[i][i] for i in range(len(self.M))]
 
-    def coeff(self):
-        A = np.array(self.M); B = np.array(self.f(self.M)) # Solve Ax = B
-        d = np.linalg.det(A)
-        sol = np.linalg.solve(d*A, B)
-        # sol, d = solve_in_rationals(A,B) 
-        return [sol, d]
+    def coeff(self, surface, list_of_curves):
+        A = np.array(self.M); B = np.array(self.f()) # Solve Ax = B
+        sol = solve_in_rationals(A,B)
+        if surface == 'X':
+            sol = [sol[i] for i in range(self.num_curves) if i+self.indexing in list_of_curves]
+        return sol
 
     '''
     auxiliar function to print coefficieints K_Y or K_X
@@ -82,9 +95,7 @@ class surface():
     '''
     def pcoeff(self, surface, list_of_curves):
         A = np.array(self.M); B = np.array(self.f()) # Solve Ax = B
-        d = int(np.linalg.det(A))
-        sol = np.linalg.solve((1/d)*A, B)
-        sol = [fractions.Fraction(int(np.rint(x)), d) for x in sol]
+        sol = solve_in_rationals(A,B)
         # sol, denom = solve_in_rationals(np.array(M),np.array(f(M)))
         s = 'K_' + surface + ' = ('
         for i in range(len(sol)):
@@ -100,16 +111,19 @@ class surface():
     neatly prints something like K = 1/5(2C_1 + 3C_2) 
     '''
     def giveKY(self):
-        return self.pcoeff('Y', [])
+        self.pcoeff('Y', [])
+        return self.coeff('Y',[])
 
     # KX, prints after contracting all non (-1) curves in Y
     def giveKX(self): 
-        return self.pcoeff('X', self.inX)
+        self.pcoeff('X', self.inX)
+        return self.coeff('X', self.inX)
 
     '''
     Find π^*(K_X)
+    Set print_string to false if don't want the coefficients to be printed
     '''
-    def pullbackK(self):
+    def pullbackK(self, print_string=True):
         n = self.num_curves
         exceptional = [i for i in range(n) if not (i+self.indexing) in self.inX] # exceptional is 0 indexed
         m = len(exceptional)
@@ -117,35 +131,38 @@ class surface():
         for i in range(m):
             M[i][i] = self.self_inter[exceptional[i]]
         for i in range(m):
-            for x in adj[exceptional[i]]:
+            for x in self.adj[exceptional[i]]:
                 if x-self.indexing in exceptional:
                     # print(i, exceptional.index(x))
                     M[i][exceptional.index(x-self.indexing)] = 1  
         A = np.array(M)
         B = np.array([self.f()[i] for i in range(self.num_curves) if i in exceptional])
         # Solve Ax = B
-        d = np.linalg.det(A)
+        d = int(np.rint(np.linalg.det(A)))
+        # print(d)
         try: ## In case exceptional locus is empty
-            d = int(np.linalg.det(A))
-            sol = np.linalg.solve((1/d)*A, B)
-            sol = [fractions.Fraction(int(np.rint(x)), d) for x in sol]
+            sol = solve_in_rationals(A,B)
+            # print(sol)
         except:
             print("Some issue")
-            d = 1
             sol = []
-            
-        s = 'K_Y = π^* K_X + '
-        for i in range(len(sol)):
-            s += str(sol[i]) + 'C_' + str(exceptional[i]+self.indexing) + ' + '
-        if len(sol) > 0:
-            s = s[:-3]
-            print(s) # prints equation
+
+        ## in case don't want to print string and only want list of coefficients to be returned
+        if print_string:  
+            s = 'K_Y = π^* K_X + '
+            for i in range(len(sol)):
+                s += str(sol[i]) + 'C_' + str(exceptional[i]+self.indexing) + ' + '
+            if len(sol) > 0:
+                s = s[:-3]
+                print(s) # prints equation
         return sol # returns array of coefficients
     
-    def discrepancies(self):
+    ## returns discrepancy of EVERY curve, not just exceptional ones. 
+    ## So for example [-1/2,0,0] if only first out of three curves is contracted
+    def discrepancies(self,print_string=True):
         n = self.num_curves
         exceptional = [i for i in range(n) if not (i+self.indexing) in self.inX] # exceptional is 0 indexed
-        coefficients = self.pullbackK()
+        coefficients = self.pullbackK(print_string)
         discrepancies = [0]*n
         for i in range(n):
             if i in exceptional:
@@ -178,7 +195,7 @@ class surface():
         Find D_1 . D_2
     '''
 
-    def intersectionProduct(self,D1, D2):
+    def intersectionProduct(self, D1, D2):
         return np.matmul(np.matmul(np.transpose(D1), self.M), D2)
 
     '''
@@ -222,9 +239,10 @@ class surface():
         # arithematic genus
         pz = (adj+2)/2
         if int(pz)-pz != 0:
-            print('WEIRD ISSUE, p_Z is not an integer?!')
+            print('WEIRD ISSUE, p_Z = {} is not an integer?!'.format(pz))
+            return
         if pz == 0:
-            return "True"
+            return "True, p_Z = " + str(int(pz))
         return "False, p_Z = " + str(int(pz))
 
     def printinfo(self):
@@ -234,22 +252,39 @@ class surface():
             if x >= 0:
                 negative_definite = False 
         print("Negative Definite: ", negative_definite, end = '\n\n')
-        if negative_definite:
-            self.giveKY()
+        if not negative_definite:
+            print(np.linalg.eig(self.M)[0])
+            return
+        KY = self.giveKY()
+        print("")
+
+        ## if X = Y, then π is silly and useless
+        if len(self.inX) < self.num_curves:
+            self.giveKX()
             print("")
-
-            ## if X = Y, then π is silly and useless
-            if len(self.inX) < self.num_curves:
-                self.giveKX()
-                print("")
-                print("Pullback of K_X under π:Y -> X", end = '\n\n')
-                self.checkAmple()
-            print("Fundamental cycle: ", end = ' ')
-            self.pFundamentalCycle()
+            print("Pullback of K_X under π:Y -> X", end = '\n\n')
+            self.checkAmple()
             print("")
-            print("Rational: ", self.isRational())
+        ## print self-intersection numbers
+        KY2 = Y.intersectionProduct(KY,KY)
+        print("K_Y^2 = ", Y.intersectionProduct(KY,KY))
+        if len(self.inX) < self.num_curves:
+            exceptional = [i for i in range(self.num_curves) if not (i+self.indexing) in self.inX]
+            disc = self.discrepancies(print_string=False)
 
+            # print(exceptional)
+            # print(disc)
+            # print([disc[i] * (-2-self.M[i][i]) for i in range(self.num_curves)])
 
+            KY2_minus_KX2 = sum([disc[i] * (-2-self.M[i][i]) for i in range(self.num_curves)])
+            print("K_X^2 = ", KY2 - KY2_minus_KX2)
+            print("K_X^2 - K_Y^2 = ", -KY2_minus_KX2)
+            print("")
+        
+        print("Fundamental cycle: ", end = ' ')
+        self.pFundamentalCycle()
+        print("")
+        print("Rational: ", self.isRational())
 
 # M = [[-4,0,0,1,1,1],[0,-4,0,1,0,0],[0,0,-4,0,1,0],[1,1,0,-1,0,0],[1,0,1,0,-1,0],[1,0,0,0,0,-1]]
 # M = [[-4,0,1,1,1],[0,-4,1,0,0],[1,1,-1,0,0],[1,0,0,-1,0],[1,0,0,0,-1]] 
@@ -260,95 +295,127 @@ class surface():
 
 # self_inter = [-1,-1,-1]
 # adj = [[2,3],[1,3],[1,2]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ####### Example 2
 
 # self_inter = [-1,-1,-1, -4]
 # adj = [[4],[4],[4],[1,2,3]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ####### Example 3
 
 # self_inter = [-1,-1,-1, -4, -4]
 # adj = [[4,5],[4],[4],[1,2,3],[1]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ####### Example 3.5
 
 # self_inter = [-1,-1,-1, -4, -4, -4]
 # adj = [[4,5],[4,6],[4],[1,2,3],[1], [2]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ####### Example 4
 
 # self_inter = [-1,-1,-1, -4, -4, -4, -4]
 # adj = [[4,5],[4,6],[4,7],[1,2,3],[1],[2],[3]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ####### Example 5
 
 # self_inter = [-1, -1, -1, -4, -4, -4, -4, -4]
 # adj = [[4,5, 8],[4,6],[4,7],[1,2,3],[1],[2],[3], [1]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ####### Example 6
 
 # self_inter = [-1, -1, -1, -4, -4, -4, -4, -4, -4, -4]
 # adj = [[4,5,8],[4,6, 9],[4,7, 10],[1,2,3],[1],[2],[3], [1], [2], [3]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ######## Example 7
 
 # self_inter = [-1,-1,-1,-2,-5,-4]
 # adj = [[5,6],[6],[6],[5],[4,1],[1,2,3]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ######## Example 8
 
 # self_inter = [-1,-1,-1,-2,-5,-4,-4]
 # adj = [[5,6],[6,7],[6],[5],[4,1],[1,2,3],[2]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ######## Example 9
 
 # self_inter = [-1,-1,-1,-2,-5,-4,-4,-4]
 # adj = [[5,6],[6,7],[6,8],[5],[4,1],[1,2,3],[2],[3]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ######## Example 10
 
 # self_inter = [-1,-1,-1,-2,-5,-4,-4,-4, -4]
 # adj = [[5,6],[6,7,9],[6,8],[5],[4,1],[1,2,3],[2],[3],[2]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ######## Example 11
 
 # self_inter = [-1,-1,-1,-4,-2,-5,-2,-5]
 # adj = [[4,6],[4,8],[4],[1,2,3],[5],[1,5],[8],[2,7]]
-# printinfo(self_inter, adj, [1,2,3])
-
-######## Example 11
-
-# self_inter = [-1,-1,-1,-4,-2,-5,-4]
-# adj = [[4,6,7],[4],[4],[1,2,3],[5],[1,5],[1]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ######## Example 12
 
-# self_inter = [-1,-1,-1,-5,-2]
-# adj = [[4],[4],[4],[5],[4]]
-# printinfo(self_inter, adj, [1,2,3])
+# self_inter = [-1,-1,-1,-4,-2,-5,-4]
+# adj = [[4,6,7],[4],[4],[1,2,3],[5],[1,5],[1]]
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 ######## Example 13
 
+# self_inter = [-1,-1,-1,-5,-2]
+# adj = [[4],[4],[4],[5],[4]]
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
+
+######## Example 14
+
 # self_inter = [-1,-1,-1,-5,-2,-4,-4,-4]
-# adj = [[4,6],[4,7],[4,8],[5],[4],[1],[2],[3]]
-# printinfo(self_inter, adj, [1,2,3])
+# adj = [[4,6],[4,7],[4,8],[1,2,3,5],[4],[1],[2],[3]]
+# inX = [1,2,3,5,6]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 # self_inter = [-3,-3,-3,-2,-2]
 # adj = [[4],[4],[4],[5],[4]]
-# printinfo(self_inter, adj, [1,2,3])
+# inX = [1,2,3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
 
 '''Rational test'''
 
@@ -384,6 +451,21 @@ class surface():
 # Y = surface(self_inter,adj)
 # Y.printinfo()
 
+######## FORK 4 (from email)
+## 2 - 1 - 5 - 4         
+##     |            ->   1/25(1,14) - 5 - 1/4(1,1)
+##     3  
+## blowup of fork
+
+# self_inter = [-5,-2,-3,-4,-1]
+# adj = [[2,3,5],[1],[1],[5],[1,4]]
+# inX = [1,2,5]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
+# KY = Y.giveKY()
+# print("K_Y^2 = ", Y.intersectionProduct(KY,KY))
+
+
 ######## Cyclic quotient singularity example
 ##### Left one (see ipad diagram)
 # self_inter = [-2,-5,-1,-4]
@@ -391,11 +473,228 @@ class surface():
 # inX = [3]
 # Y = surface(self_inter,adj,inX=inX)
 # Y.printinfo()
+# KY = Y.giveKY()
+# print("K_Y^2 = ", Y.intersectionProduct(KY,KY))
 
 ##### Right one (see ipad diagram)
-self_inter = [-2,-4,-3]
-adj = [[2],[1,3],[2]]
-inX = [1,3]
-Y = surface(self_inter,adj,inX=inX)
-Y.printinfo()
+# self_inter = [-2,-4,-3]
+# adj = [[2],[1,3],[2]]
+# inX = [1,3]
+# Y = surface(self_inter,adj,inX=inX)
+# Y.printinfo()
+# KY = Y.giveKY()
+# print("K_Y^2 = ", Y.intersectionProduct(KY,KY))
 
+###### Example 15
+# 1
+# self_inter = [-2,-5,-2,-4]
+# adj = [[2],[1,3],[2,4],[3]]
+# # Y = surface(self_inter,adj,[3])
+# # Y = surface(self_inter,adj,[2,3,4])
+# # Y = surface(self_inter,adj,[2,4])
+# Y = surface(self_inter,adj,[2,3])
+# Y.printinfo()
+
+# print(hirz([2,5,2,4]))
+
+#2
+# self_inter = [-2,-5,-2,-5,-2,-1]
+# adj = [[2],[1,3],[2,4],[3,5],[4,6],[5]]
+# Y = surface(self_inter,adj,[2,4,6])
+# Y.printinfo()
+
+# self_inter = [-1,-4]
+# adj = [[2],[1]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+###### Example 16
+
+# self_inter = [-4,-4,-4,-2]
+# adj = [[4],[4],[4],[1,2,3]]
+# Y = surface(self_inter,adj,[2,3,4])
+# Y.printinfo()
+
+########### Fundamental cycle e.g. 1
+# self_inter = [-3,-4,-1,-5,-2]
+# adj = [[2,4],[1,4,3],[2],[1,2,5],[4]]
+# Y = surface(self_inter,adj,[2,3,4])
+# Y.printinfo()
+
+########### Fundamental cycle e.g. 2
+# self_inter = [-1,-2,-3,-5]
+# adj = [[2,4],[1,3],[2,4],[1,3]]
+# Y = surface(self_inter,adj)
+# Y.printinfo()
+
+############ Doubts June 19 example
+# self_inter = [-2,-5,-1]
+# adj = [[2],[1,3],[2]]
+# inX = [3]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
+# KY = Y.giveKY()
+# print("K_Y^2 = ", Y.intersectionProduct(KY,KY))
+
+######### Example 17
+
+# self_inter = [-2,-5,-3,-2,-3,-1,-4]
+# adj = [[2],[1,3],[2,4],[3,5],[4,6],[5,7],[6]]
+# inX = [6]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
+
+# arr = [-2,-5,-3,-2,-3,-1,-4]
+# print(hirz(arr))
+
+######### Example 17
+
+# self_inter = [-2,-5,-3,-2,-3,-2,-4]
+# adj = [[2],[1,3],[2,4],[3,5],[4,6],[5,7],[6]]
+# inX = [1,2,3,4,5,6]
+# # inX = [6,7]
+# Y = surface(self_inter,adj,inX)
+# Y.printinfo()
+
+# arr = [-3,-3,-3]
+# print(hirz(arr))
+
+########### CASE I: 1 T singularity
+## Example 1
+# self_inter = [-3,-2,-6,-2,-2]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+
+# Y = surface(self_inter,adj,[5])
+# Y.printinfo()
+
+# print(hirz(self_inter))
+
+
+########### Random examples to check if there exists surface with -K^2 < 1
+## Example 1
+# self_inter = [-1,-3,-2,-2,-3]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+# print(hirz(self_inter))
+
+## Example 2
+# self_inter = [-1,-2,-3,-2,-4]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+# print(hirz(self_inter))
+
+## Example 3: counterexample
+# self_inter = [-5]
+# adj = [[]]
+
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+# print(hirz(self_inter))
+
+# Example 4
+# self_inter = [-6,-2,-3,-1,-2]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+
+# Y = surface(self_inter,adj,[4])
+# Y.printinfo()
+
+# print(hirz(self_inter))
+
+######### Fork Examples
+
+#### Fork 1
+## 1 - 2 - 5 - 3
+##     |
+##     4  
+# self_inter = [-2,-5,-4,-4,-1]
+# adj = [[2],[1,4,5],[5],[2],[2,3]]
+
+# Y = surface(self_inter,adj,[5])
+# Y.printinfo()
+
+#### Fork 2
+## 1 - 2 - 3
+##     |
+##     4  
+
+# self_inter = [-2,-4,-3,-4]
+# adj = [[2],[1,3,4],[2],[2]]
+
+# Y = surface(self_inter,adj,[2,3,4])
+# Y.printinfo()
+
+# print(hirz(self_inter))
+
+#### Fork 3
+## 1 - 2 - 5 - 3
+##     |
+##     6 - 4
+
+# self_inter = [-2,-5,-4,-4,-1,-1]
+# adj = [[2],[1,5,6],[5],[6],[2,3],[2,4]]
+
+# Y = surface(self_inter,adj,[5,6])
+# Y.printinfo()
+
+### Not rational examples
+
+### Fork 2
+# 2 - 1 - 3
+#     |
+#     4  
+
+# self_inter = [-2,-2,-2,-3,-3,-3,-3]
+# adj = [[2,4,5,6,7],[1,3],[2],[1],[1],[1],[1]]
+
+# Y = surface(self_inter,adj,[])
+# print(Y.isRational())
+# Y.printinfo()
+
+### Long Example
+# self_inter = [-3,-5,-2,-1,-5,-2,-1,-3,-5,-2]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+
+# Y = surface(self_inter,adj,[4,7])
+# Y.printinfo()
+
+########## Discrepency examples
+# self_inter = [-4,-1,-5,-2,-1,-6,-2,-2]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+
+# Y = surface(self_inter,adj,[2,5])
+# Y.printinfo()
+
+# self_inter = [-2,-3,-2,-2,-2,-2,-2,-2,-2,-2,-3]
+# adj = [[9],[3],[2,4],[3,5],[4,6],[5,7],[6,8],[7,9],[1,8,10],[9]]
+
+# Y = surface(self_inter,adj,[])
+# # Y.printinfo
+# print(Y.isRational())
+
+# self_inter = [2,3,3,3,2]
+#print(hirz(self_inter))
