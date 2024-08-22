@@ -1,0 +1,50 @@
+import json
+
+dp = {1: [[0]]}
+
+def generate_valid_arrays_dp(max_length=15):
+    # Initialize a dictionary to store valid arrays for each length
+    for length in range(2, max_length + 1):
+        dp[length] = []
+        seen = set()
+
+        # Generate arrays by applying the rules to shorter arrays
+        for arr in dp[length - 1]:
+            k = len(arr)
+            if k > 1:
+                for i in range(1, k):
+                    # Insert a 1 between the neighbors and increase both neighbors
+                    new_arr = arr[:i-1] + [arr[i-1]+1, 1, arr[i]+1] + arr[i+1:]
+                    arr_tuple = tuple(new_arr)
+                    if arr_tuple not in seen:
+                        dp[length].append(new_arr)
+                        seen.add(arr_tuple)
+
+            # Prepend 1 and increase the first element
+            new_arr = [1] + [arr[0]+1] + arr[1:]
+            arr_tuple = tuple(new_arr)
+            if arr_tuple not in seen:
+                dp[length].append(new_arr)
+                seen.add(arr_tuple)
+
+            # Append 1 and increase the last element
+            new_arr = arr[:-1] + [arr[-1]+1] + [1]
+            arr_tuple = tuple(new_arr)
+            if arr_tuple not in seen:
+                dp[length].append(new_arr)
+                seen.add(arr_tuple)
+
+    # Collect all valid arrays from lengths 1 up to max_length
+    valid_arrays = []
+    for length in range(1, max_length + 1):
+        valid_arrays.extend(dp[length])
+    
+    return valid_arrays
+
+''' Generate all valid continued fractions representing 0 of length k+1 '''
+valid_arrays = generate_valid_arrays_dp(12)
+
+''' Write it to the file '''
+with open("/Users/adityakhurmi/Desktop/Research '24/Kollar Conjecture/Code/valid_arrays.txt", "w") as file:
+    json.dump(dp, file)
+
