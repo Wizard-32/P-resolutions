@@ -1,5 +1,6 @@
 import numpy as np
 from fractions import Fraction
+from collections import Counter
 
 '''Return hirzebruch fraction given list of self intersection numbers'''
 def hirz(arr):
@@ -16,6 +17,11 @@ def check_symmetric(a, rtol=1e-05, atol=1e-08):
 
 def solve_in_rationals(A: np.ndarray, b: np.ndarray):
     d = int(np.rint(np.linalg.det(A)))
+    if d == 0:
+        print("ERROR: determinant of intersection matrix is 0")
+        print("A ", np.array(A))
+        print("b, ", np.array(b))
+        return -1
     sol = []
     for i in range(np.shape(A)[0]):
         Ai = np.copy(A)
@@ -46,6 +52,7 @@ Main Methods:
     5. pFundamentalCycle: prints fundamental cycle
     6. isRational: checks if rational
     7. printinfo: prints all relevant information (e.g. checks if matrix negative definite) 
+    8. pullbackC: given a curve C (by index of the strict transform CY on Y) on X, prints π^*(C), C^2
 '''
 class surface():
     def __init__(self, self_inter, adj, inX=-1, indexing=1):
@@ -58,44 +65,70 @@ class surface():
         else:
             self.inX = inX # inX has indices of curves that are in X
         self.M = self.inter_mat()
+        self.Mexc = self.inter_mat_exc() # intersection matrix of the exceptional locus
     ''' 
     create intersection matrix
     [[2,3],[1],[2]] is the matrix [X^2,1,1],[1,Y^2,0],[0,1,Z^2]
     NOTE: CAN CONTROL INDEXING by changing last parameter to 0
+    NOTE: include curve more than once if has higher multiplicity
+    NOTE: as of now, multiplicites not implemented in any other part of the code ??
     '''
     def inter_mat(self):
         n = self.num_curves
-        M = [[0]*n for i in range(n)]
+        M = [[0]*n for _ in range(n)]
         for i in range(n):
             M[i][i] = self.self_inter[i]
         for i in range(n):
-            for x in self.adj[i]:
-                M[i][x-self.indexing] = 1
+            curves_it_intersects = Counter(self.adj[i])
+            ## this is a dictionary since it can intersect a curve more than once
+            for x in curves_it_intersects.keys():
+                M[i][x-self.indexing] = curves_it_intersects[x]
         if not check_symmetric(M):
-            print("WRONG MATRIX")
+            print("ERROR: WRONG MATRIX, not symmetric")
         return M
+    
+    def inter_mat_exc(self):
+        n = self.num_curves
+        exceptional = [i for i in range(n) if not (i+self.indexing) in self.inX] # exceptional is 0 indexed
+        m = len(exceptional)
+        M = [[0]*m for _ in range(m)]
+        for i in range(m):
+            M[i][i] = self.self_inter[exceptional[i]]
+        for i in range(m):
+            for x in self.adj[exceptional[i]]:
+                if x-self.indexing in exceptional:
+                    M[i][exceptional.index(x-self.indexing)] = 1
+        if not check_symmetric(M):
+            print("ERROR: WRONG MATRIX, not symmetric")
+        return M 
 
     '''
-    returns column vector [K.C1, K.C_2, ...] = [-C_1^2 - 2, - C_2^2 - 2, ...]
+    returns column vector [K.C_1, K.C_2, ...] = [ -C_1^2 - 2, -C_2^2 - 2, ...]
+            only for the exceptional curves
     '''
     def f(self):
         return [-2-self.M[i][i] for i in range(len(self.M))]
 
+    '''
+    finds discrepancies of the exceptional curves
+    '''
     def coeff(self, surface, list_of_curves):
         A = np.array(self.M); B = np.array(self.f()) # Solve Ax = B
         sol = solve_in_rationals(A,B)
-        if surface == 'X':
-            sol = [sol[i] for i in range(self.num_curves) if i+self.indexing in list_of_curves]
+        if sol != -1 and surface == 'X':
+            sol = [sol[i] for i in range(len(sol)) if i+self.indexing in list_of_curves]
         return sol
 
     '''
-    auxiliar function to print coefficieints K_Y or K_X
-    surface: X or Y (here Y -> X is a resolution)
+    auxiliary function to print coefficieints K_Y or K_X
+    surface: X or Y (here Y -> X is the resolution)
     list_of_curves : which curves are in the surface
     '''
     def pcoeff(self, surface, list_of_curves):
         A = np.array(self.M); B = np.array(self.f()) # Solve Ax = B
         sol = solve_in_rationals(A,B)
+        if sol == -1:
+            return 
         # sol, denom = solve_in_rationals(np.array(M),np.array(f(M)))
         s = 'K_' + surface + ' = ('
         for i in range(len(sol)):
@@ -133,16 +166,12 @@ class surface():
         for i in range(m):
             for x in self.adj[exceptional[i]]:
                 if x-self.indexing in exceptional:
-                    # print(i, exceptional.index(x))
                     M[i][exceptional.index(x-self.indexing)] = 1  
         A = np.array(M)
         B = np.array([self.f()[i] for i in range(self.num_curves) if i in exceptional])
         # Solve Ax = B
-        d = int(np.rint(np.linalg.det(A)))
-        # print(d)
         try: ## In case exceptional locus is empty
             sol = solve_in_rationals(A,B)
-            # print(sol)
         except:
             print("Some issue")
             sol = []
@@ -169,15 +198,12 @@ class surface():
                 discrepancies[i] = coefficients[exceptional.index(i)] 
         return discrepancies
 
+    # check if K is π-ample 
     def checkAmple(self):
         discrepancies = self.discrepancies()
-        # print(discrepancies)
-        M = self.inter_mat()
         ample = True
         for i in self.inX:
-            # print(M[i-indexing])
-            # print(dot(discrepancies,M[i-indexing]))
-            kc =  - 2 - self.self_inter[i-self.indexing] - np.dot(discrepancies,M[i-self.indexing])
+            kc =  - 2 - self.self_inter[i-self.indexing] - np.dot(discrepancies,self.M[i-self.indexing])
             s = 'K_X . C_' + str(i) + ' = ' + str(kc)
             print(s)
             if kc <= 0:
@@ -185,11 +211,10 @@ class surface():
         print("")
         print("π-Ample: ",ample)
         return ample
-        # print(arr)
 
     '''
     Intersection Product:
-        Given two divisors 
+        Given two divisors (on the resolution Y)
             D_1 = a_1C_1 + ... + a_nC_n as [a_1,...,a_n] and
             D_2 = b_1C_1 + ... + b_nC_n as [b_1,...,b_n] 
         Find D_1 . D_2
@@ -197,7 +222,7 @@ class surface():
 
     def intersectionProduct(self, D1, D2):
         return np.matmul(np.matmul(np.transpose(D1), self.M), D2)
-
+    
     '''
     Check if Rational using Artin's Criteria
     1. Find Fundamental Cycle Z
@@ -207,35 +232,39 @@ class surface():
     ## Check if Z is a negative cycle, Z given as a list of coefficients
     ## return True or False
     ## If false, also returns lowest (0) index of curve where it fails
+    ## NOTE: need to check Z.C only with exceptional C
     def isNegativeCycle(self, coeff):
-        for k in range(self.num_curves):
-            ZdotC = sum([coeff[i]*self.M[i][k] for i in range(self.num_curves)])
-            if ZdotC > 0:
-                return [False, k]
+        # M = self.inter_mat_exc()
+        for k in range(len(self.M)):
+            if k+self.indexing not in self.inX: ## need to check Z.C with only EXCEPTIONAL C
+                ZdotC = np.dot(np.array(coeff), self.M[k])
+                if ZdotC > 0:
+                    return [False, k]
         return [True, None]
 
-    ## Find fundamental cycle Z, a list of coefficients
+    ## Find fundamental cycle Z, a list of coefficients of ALL curves (not just exceptional ones)
     def fundamentalCycle(self):
-        coeff = [1]*len(self_inter)
+        ### attempt 3:
+        coeff = [0 if i+self.indexing in self.inX else 1 for i in range(len(self.self_inter))]
         while not self.isNegativeCycle(coeff)[0]:
             k = self.isNegativeCycle(coeff)[1] 
             coeff[k] += 1
         return coeff
 
     ## Print Fundamental cycle
-    def pFundamentalCycle(self):
-        coeff = self.fundamentalCycle()
+    def pFundamentalCycle(self, fundamental_cycle):
+        Z = fundamental_cycle
         s = "Z = "
-        for i in range(len(coeff)):
-            s += str(coeff[i]) + 'C_' + str(i+1) + ' + '
+        for i in range(len(Z)):
+            s += str(Z[i]) + 'C_' + str(i+self.indexing) + ' + '
         s = s[:-2]
         print(s) 
 
     ## check if rational
-    def isRational(self):
-        Z = self.fundamentalCycle()
+    def isRational(self, fundamental_cycle):
+        Z = fundamental_cycle
         # adj = (K+Z) . Z
-        adj = sum([Z[i] * (-2-self.self_inter[i]) for i in range(self.num_curves)]) + self.intersectionProduct(Z,Z)
+        adj = sum([Z[i] * (-2-self.M[i][i]) for i in range(len(self.M))]) + self.intersectionProduct(Z,Z)
         # arithematic genus
         pz = (adj+2)/2
         if int(pz)-pz != 0:
@@ -245,17 +274,26 @@ class surface():
             return "True, p_Z = " + str(int(pz))
         return "False, p_Z = " + str(int(pz))
 
+    '''
+    Print information about the surface
+    '''
     def printinfo(self):
-        print("Intersection matrix = ", self.M)
+        print("Intersection matrix for exceptional curves = ")
+        print(np.array(self.Mexc))
         negative_definite = True
-        for x in np.linalg.eig(self.M)[0]:
+        if len(self.Mexc) == 0:
+            print("ERROR: EMPTY EXCEPTIONAL LOCUS")
+            return
+        for x in np.linalg.eig(self.Mexc)[0]:
             if x >= 0:
                 negative_definite = False 
-        print("Negative Definite: ", negative_definite, end = '\n\n')
+        print("Negative Definite (only exceptional curves): ", negative_definite, end = '\n\n')
         if not negative_definite:
-            print(np.linalg.eig(self.M)[0])
+            print("eigenvalues = ", np.linalg.eig(self.Mexc)[0])
             return
         KY = self.giveKY()
+        if KY == -1:
+            return
         print("")
 
         ## if X = Y, then π is silly and useless
@@ -266,15 +304,11 @@ class surface():
             self.checkAmple()
             print("")
         ## print self-intersection numbers
-        KY2 = Y.intersectionProduct(KY,KY)
-        print("K_Y^2 = ", Y.intersectionProduct(KY,KY))
+        KY2 = self.intersectionProduct(KY,KY)
+        print("K_Y^2 = ", self.intersectionProduct(KY,KY))
         if len(self.inX) < self.num_curves:
-            exceptional = [i for i in range(self.num_curves) if not (i+self.indexing) in self.inX]
+            # exceptional = [i for i in range(self.num_curves) if not (i+self.indexing) in self.inX]
             disc = self.discrepancies(print_string=False)
-
-            # print(exceptional)
-            # print(disc)
-            # print([disc[i] * (-2-self.M[i][i]) for i in range(self.num_curves)])
 
             KY2_minus_KX2 = sum([disc[i] * (-2-self.M[i][i]) for i in range(self.num_curves)])
             print("K_X^2 = ", KY2 - KY2_minus_KX2)
@@ -282,9 +316,83 @@ class surface():
             print("")
         
         print("Fundamental cycle: ", end = ' ')
-        self.pFundamentalCycle()
+        fundamental_cycle = self.fundamentalCycle()
+        self.pFundamentalCycle(fundamental_cycle)
         print("")
-        print("Rational: ", self.isRational())
+        print("Rational: ", self.isRational(fundamental_cycle))
+        return
+    
+    '''
+    General pull back:
+        Given a curve C,
+        Find π^*(C) = C' + b_1C_1 + ... + b_nC_n when C is contracted
+        NOTE: ASSUMES C IS RATIONAL
+        NOTE: index is a very specific parameter just for my project. 
+              given a curve G (by index), computes (K.G)/(C.G) - (K.C)/(C^2) 
+              assumes G not contracted, G.C = 0 on the resolutions Y (which is what we should have?)
+        NOTE: assumes C is contracted
+    '''
+    def pullbackC(self, indexC, indexG=-1, print_string=True):
+        if indexC not in self.inX:
+            print("The curve C is not being contracted")
+            return
+        n = self.num_curves
+        exceptional = [i for i in range(n) if not (i+self.indexing) in self.inX] # exceptional is 0 indexed
+        m = len(exceptional)
+        try:
+            exceptional_intersecting_C = [i-self.indexing for i in self.adj[indexC-self.indexing] if i-self.indexing in exceptional]
+            C_exceptional = [1 if i in exceptional_intersecting_C else 0 for i in exceptional]
+            exceptional_intersecting_G = [i-self.indexing for i in self.adj[indexG-self.indexing] if i-self.indexing in exceptional]
+            G_exceptional = [1 if i in exceptional_intersecting_G else 0 for i in exceptional]
+        except:
+            print("ERROR: check indices, out of range maybe?")
+        # an array of 1s and 0s, with a 0 if C doesn't intersects the exceptional curve, else 1
+
+        A = np.array(self.Mexc)
+        B = np.array(C_exceptional)
+
+        # print("A ", A)
+        # print("B ", B)
+        ### Solve Ax + B = 0
+        try: ## In case exceptional locus is empty
+            sol = solve_in_rationals(A,-B)
+            # print(sol)
+        except:
+            print("Some issue")
+            sol = []
+        # print("sol ", sol)
+        ## in case don't want to print string and only want list of coefficients to be returned
+        if print_string:  
+            print('DATA FOR C = π_*(C_' + str(indexC) + ')')
+            s = 'π^* C = C_' + str(indexC) + ' + ' 
+            for i in range(len(sol)):
+                if sol[i] == 0: continue
+                s += str(sol[i]) + 'C_' + str(exceptional[i]+self.indexing) + ' + '
+            if len(sol) > 0:
+                s = s[:-3] # removes an extra plus sign at the end
+                print(s, end = '\n\n') # prints equation
+
+            KC = -2 - self.self_inter[indexC-self.indexing] - np.dot(self.pullbackK(print_string=False), C_exceptional)
+            C2 = self.self_inter[indexC-self.indexing] + np.dot(sol,C_exceptional)
+            print("K_X.C = ", str(KC), end = ', ')
+            print("C^2 = ", str(C2), end = '\n\n')
+        if indexG != -1:
+            KG = -2 - self.self_inter[indexG-self.indexing] - np.dot(self.pullbackK(print_string=False), G_exceptional)
+            CG = np.dot(sol,[self.inter_mat()[indexG][j] for j in exceptional])
+            print("K_X.G = ", KG, end = ', ')
+            print("C.G = ", CG, end = '\n\n')
+            print("K_X.G/C.G - K_X.C/C^2 =", end = ' ')
+            try:
+                print(KG/CG - KC/C2)
+            except:
+                print("ERROR")
+                if C2 == 0:
+                    print("C^2 = 0")
+                if CG == 0:
+                    print("C.G = 0")
+        print("")
+        return sol # returns array of coefficients
+    
 
 # M = [[-4,0,0,1,1,1],[0,-4,0,1,0,0],[0,0,-4,0,1,0],[1,1,0,-1,0,0],[1,0,1,0,-1,0],[1,0,0,0,0,-1]]
 # M = [[-4,0,1,1,1],[0,-4,1,0,0],[1,1,-1,0,0],[1,0,0,-1,0],[1,0,0,0,-1]] 
@@ -441,14 +549,15 @@ class surface():
 # Y.printinfo()
 
 ######## FORK 3, example of not rational 
-## 2 - 1 - 5
+## 2 - 1 - 5 - 6
 ##    / \
 ##   3   4
 ## All self intersection (-2) except 1
 
-# self_inter = [-2,-3,-3,-3,-3]
-# adj = [[2,3,4,5],[1],[1],[1],[1]]
-# Y = surface(self_inter,adj)
+# self_inter = [-2,-3,-3,-3,-3,-3]
+# # adj = [[2,3,4,5],[1],[1],[1],[1,6],[5]]
+# adj = [[1,2,3,4],[0],[0],[0],[0,5],[4]]
+# Y = surface(self_inter,adj,[5],indexing=0)
 # Y.printinfo()
 
 ######## FORK 4 (from email)
@@ -696,5 +805,288 @@ class surface():
 # # Y.printinfo
 # print(Y.isRational())
 
-# self_inter = [2,3,3,3,2]
-#print(hirz(self_inter))
+
+###### Playing around with Forks
+#### Fork 2
+## 2 - 1 - 3
+##     |
+##     4  
+
+# self_inter = [-2,-2,-2,-2]
+# adj = [[2,3,4],[1],[1],[1]]
+
+# Y = surface(self_inter,adj,[])
+# # Y.printinfo()
+# print(Y.isRational())
+
+####### S-Forks
+##### Example 1
+# self_inter = [-4,-1,-5,-2,-1,-5,-2,-1,-5,-2]
+# adj = [[2,5,8],[1,3],[2,4],[3],[1,6],[5,7],[6],[1,9],[8,10],[9]]
+
+# Y = surface(self_inter,adj,[2,5,8])
+# Y.printinfo()
+
+##### Example 2
+## Level 1
+# self_inter = [-3,-2,-4,-2,-2,-4,-2]
+# adj = [[2],[1,3],[2,4],[3,5,6],[4],[4,7],[6]]
+# # in_X = [1,3,6]
+# in_X = [1,2,4,7]
+# Y = surface(self_inter,adj,in_X)
+# Y.printinfo()
+
+## Level 2
+# self_inter = [-3,-2,-5,-1,-4,-2,-1,-5,-2]
+# adj = [[2],[1,3],[2,4],[3,5],[4,6,7],[5],[5,8],[7,9],[8]]
+# # in_X = [1,3,6]
+# in_X = [1,4,6,7]
+# Y = surface(self_inter,adj,in_X)
+# Y.printinfo()
+
+###### Pathology
+# self_inter = [-1,-3,-5,-3,-2,-1,-5,-2]; n = len(self_inter)
+# adj = [[8,2],[1,3],[2,4],[3,5],[4,6],[5,7],[6,8],[7,1]]
+# # for i in range(1, n):
+# #     adj.append([(i-1) % n + 1, (i+1) % n + 1])
+# print(adj)
+# in_X = [1,6]
+# Y = surface(self_inter,adj,in_X)
+# Y.printinfo()
+
+# self_inter = [-4,-6,-1,-3,-1,-6,-2,-2]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):    adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+# in_X = [3,5]
+# Y = surface(self_inter,adj,in_X)
+# Y.printinfo()
+
+'''Fake-Trianglke Singularities rationality testing'''
+### Fork 
+# 2 - 1 - 3
+#     |
+#     4  
+
+# self_inter = [-3,-3,-3,-3]
+# adj = [[2,3,4],[1],[1],[1]]
+
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+#### Fork 2
+## 2 - 1 - 3 
+##     |
+##     4 - 5 
+
+# self_inter = [-3,-2,-2,-2,-2]
+# adj = [[2,3,4],[1],[1],[1,5],[4]]
+
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+##### Example of a node with negative self-intersection
+
+# self_inter = [-1,-5]
+# adj = [[2,2],[1,1]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+########## Lee & Park's example of rational ellitpic surface 
+########## (used to construct surface of general type with pg = 0 and K^2 = 2)
+# self_inter = [-2,-2,-2,-2,-2,-10,-1,-2,-2,-2,-7,-1,-1,-1,-5,-1,-2,-7,-2,-2,-3,-1,-2,-1,-4,-2,-1,-3,-2,-2]
+# adj = [[15,2],[1,3],[2,4,29],[3,5],[4,6],[5,7,23,24],[6,8],[7,9],[8,10],[9,11],[10,12,13,14],
+#        []]
+
+# self_inter = [-3,-5,-2,-2,-2,-2,-2,-2,-5]
+# adj = [[2,3,6,9],[1],[1,4],[3,5],[4],[1,7],[6,8],[7],[1]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+# self_inter = [-2,-8,-2,-2,-2,-2,-2,-2,-2]
+# adj = [[2,3,6,9],[1],[1,4],[3,5],[4],[1,7],[6,8],[7],[1]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+### I6 I3 I2 I1, no p_z = 1
+# self_inter = [-2,-6,-3,-2,-2,-2,-2]
+# adj = [[2,3,4,5],[1],[1],[1],[1,6],[5,7],[6]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+### I6 I3 2I1, no, not negative definite
+# self_inter = [-2,-6,-3,-2,-2,-2,-2,-2,-2]
+# adj = [[2,3,4,7],[1],[1],[1,5],[4,6],[5],[1,8],[7,9],[8]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+### 2I4 2I2, no p_z = 1
+# self_inter = [-2,-4,-4,-2,-2]
+# adj = [[2,3,4,5],[1],[1],[1],[1]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+
+# self_inter = [-1,-2,-2,-4,-1,-4,-1,-2,-2,-2,-2,-2,-2,-2,-2,-2]
+# adj = [[2,4,6,8],[1,3,3],[2,2],[1,5,5],[4,4],[1,7,7],[6,6],[1,9,16],[8,10],[9,11],[10,12],[11,13],[12,14],[13,15],[14,16],[8,15]]
+# if len(self_inter) == len(adj):
+#     Y = surface(self_inter,adj,[1,3,5,7,16])
+#     Y.printinfo()
+# else:
+#     print(len(self_inter),len(adj))
+
+##### Final working example with K_S ample
+# self_inter = [-10,-2,-2,-2,-2,-5,-5,-2,-2,-2,-2,-2,-5,-2] 
+# # note -10 is to make negative definite, it doesn't contribute
+# adj = [[2,7,9,13],[1,3],[2,4],[3,5],[4,6],[5],[1,8],[7],[1,10],[9,11],[10,12],[11],[1,14],[13]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+# self_inter = [-3,-6,-2,-2,-2,-2,-2,-2,-3,-2,-2,-2,-3,-5]
+# adj = [[2,6,10,14],[1,3],[2,4],[3,5],[4],[1,7],[6,8],[7,9],[8],[1,11],[10,12],[11,13],[12],[1]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+#### testing
+# n = 10
+# self_inter = [-5]+[-2]*n
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+# self_inter = [-2,-2,-2,-2,-(n+2)]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+# self_inter = [-3,-2,-2,-2,-2,-3,-2]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+# self_inter = [-4,-4,-2]
+# adj = [[2]]
+# for i in range(1,len(self_inter)-1):
+#     adj.append([i,i+2])
+# adj.append([len(self_inter)-1])
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+###### Possible example that works using I6, I3, I2
+# x = -2
+# self_inter = [x,-2,-7,-3,-2,-2,-3,-2,-3,-3]
+# adj = [[2,5,10],[1,3],[2,4],[3],[1,6],[5,7],[6,8],[7,9],[8],[1]]
+# Y = surface(self_inter,adj,[1])
+# Y.printinfo()
+
+# 0-indexed, example from paper
+# self_inter = [x*(-1) for x in [1,3,2,2,2,2,3,2,2,2,4,4,2,1,1,1]]
+# adj = [[1,9,10],[0,2,15],[1,3],[2,4],[3,5],[4,6],[5,7,15],[6],[9],[0,8],[0,11,13],[10,12],[11,13],[10,12],[7,11],[1,6]]
+# Y = surface(self_inter,adj,[0,13,14,15],indexing=0)
+# Y.printinfo()
+# # Y.pullbackC(0,13)
+# Y.pullbackC(13)
+# Y.pullbackC(14)
+# Y.pullbackC(15)
+#### conclusion: diff = -1235/4564 = -0.2705959684
+
+
+# 0-indexed, example from paper with extra blowup
+# self_inter = [x*(-1) for x in [1,3,2,2,2,2,3,2,2,2,5,4,2,2,1]]
+# adj = [[1,9,10],[0,2],[1,3],[2,4],[3,5],[4,6],[5,7],[6],[9],[0,8],[0,11,14],[10,12],[11,13],[12,14],[10,13]]
+# Y = surface(self_inter,adj,[0,14],indexing=0)
+# Y.printinfo()
+# Y.pullbackC(0,14)
+#### conclusion: difference got worse: -6251/9724 = -0.6428424517
+
+# x = -7
+# self_inter = [x,-6,-2,-2,-4,-3]
+# adj = [[2,3,4],[1],[1],[1,5],[4,6],[5]]
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
+
+# self_inter = [x*(-1) for x in [1,2,2,2,2,2,3,4,3,2,3,2,1]]
+# adj = [[1,6,8],[0,2],[1,3],[2,4],[3,5],[4],[0,7,12],[6,12],[0,9],[8,10],[9,11],[10],[6,7]]
+# # print(len(self_inter) - len(adj))
+# Y = surface(self_inter,adj,[0,12],indexing=0)
+# Y.printinfo()
+# Y.pullbackC(0,12)
+
+### Potential example that works:
+# self_inter = [-1,-2,-2,-2,-2,-2,-2,-3,-4,-1,-1,-3,-2,-3,-1,-2]
+# adj = [[1,7,11],[0,2,6],[1,3],[2,4],[3,5],[4,6],[1,5,15],[0,8,9],[7,9,10],[7,8],[8,15],[0,12,14],[11,13],[12,14,15],[11,13],[6,10,13]]
+# Y = surface(self_inter,adj,[0,6,9,10,14],indexing=0)
+# Y.printinfo()
+# #compute self intersection numbers of curves we don't contract:
+# Y.pullbackC(0)
+# Y.pullbackC(6)
+# Y.pullbackC(9)
+# Y.pullbackC(10)
+# Y.pullbackC(14)
+
+# self_inter = [-4,-4,-2,-1]
+# adj = [[2,4],[1,3],[2,4],[1,3]]
+# Y = surface(self_inter,adj,[4])
+# Y.pullbackC(4) 
+
+# self_inter = [-3,-2,-1]
+# adj = [[2,3],[1,3],[1,2]]
+# Y = surface(self_inter,adj,[3])
+# Y.pullbackC(3) 
+
+# self_inter = [-3,-5,-1,-2]
+# adj = [[2,3],[1,3,4],[1,2],[2]]
+# Y = surface(self_inter,adj,[3])
+# Y.pullbackC(3)
+
+'''LATEST POTENTIAL EXAMPLE'''
+self_inter = [x*(-1) for x in [1, #section 1
+                               2,2,2,2,2,2,
+                               3,3,1,
+                               3,3,3,1,
+                               1,
+                               2, #15, section 2
+                               1, #16, section 3
+                               1, #17, section 4
+                               1, #18, section 5
+                               1  #19, section 6
+                               ]]
+adj = [[1,7,10],#section 1
+       [0,2,6],[1,3,19],[2,4,18],[3,5,17],[4,6,16],[1,5,15],
+       [0,8,9,16,18],[7,9,15,17,19],[7,8],
+       [0,11,13,17],[10,12,14,18],[11,13,16,19],[10,12],
+       [11,15],
+       [6,8,14], #15, section 2
+       [5,7,12], #16, section 3
+       [4,8,10], #17, section 4
+       [3,7,11], #18, section 5
+       [2,8,12]  #19, section 6
+       ]
+Y = surface(self_inter,adj,[0,6,9,13,14,16,17,18,19],indexing=0)
+Y.printinfo()
+Y.pullbackC(0)
+Y.pullbackC(6)
+Y.pullbackC(9)
+Y.pullbackC(13)
+Y.pullbackC(14)
+Y.pullbackC(16)
+Y.pullbackC(17)
+Y.pullbackC(18)
+Y.pullbackC(19)
+Y.pullbackC(0,13) # C = C_0, G = C_13
+
+##### Dual world
+# x = 4
+# self_inter = [-x,-6,-2,-3,-3,-2,-3,-3,-2]
+# adj = [[2,3,6],[1],[1,4],[3,5],[4],[1,7],[6,8],[7,9],[8]]
+# Y = surface(self_inter,adj,[])
+# Y.printinfo()
